@@ -79,6 +79,8 @@ export interface PipelineResult {
   };
   /** 数据校验报告 */
   validation?: import("./validation").ValidationReport;
+  /** 处理后的行数据（用于浏览器端下载） */
+  rows?: Record<string, unknown>[];
 }
 
 export interface RawRow {

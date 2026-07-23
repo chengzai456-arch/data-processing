@@ -214,7 +214,7 @@ export async function runPipeline(
   cur = rule5SchedulePunch(cur);
   cur = rule6NoteOverride(cur);
 
-  // 写入 Supabase + 生成校验报告
+  // 写入 Supabase（如果配置了）+ 生成校验报告
   const resignedCount = mapped.length - s2.length; // step1 + step2
   const gusRemovedCount = s4.length - s5.length; // step5
   const validation = generateValidationReport(
@@ -251,6 +251,33 @@ export async function runPipeline(
     date: dd,
     worker_type: workerType,
     validation,
+    rows: cur.map((r) => ({
+      工号: r.employee_code,
+      姓名: r.employee_name,
+      考勤日期: r.date,
+      三级部门: r.department_level3,
+      四级部门: r.department_level4,
+      五级部门: r.department_level5,
+      班次名称: r.shift_name,
+      首打卡: r.first_punch,
+      末打卡: r.last_punch,
+      打卡次数: r.punch_count,
+      排班正确: r.is_schedule_correct,
+      是否排班: r.is_scheduled,
+      标准打卡: r.standard_punch_count,
+      缺卡: r.miss_count,
+      补签: r.makeup_count,
+      每日工时: r.daily_total_hours,
+      日超8H: r.is_over8h,
+      加班工时: r.overtime_hours,
+      本周加班: r.week_overtime_hours,
+      上周加班: r.last_week_overtime_hours,
+      双周加班: r.sign_hours,
+      HUB: r.hub_status,
+      休息开始: r.rest_start,
+      休息结束: r.rest_end,
+      备注: r.note,
+    })),
     stats: {
       original: mapped.length,
       after_step1_remove_resigned: s1.length,

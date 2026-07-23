@@ -124,11 +124,40 @@ export default function HomePage() {
 
       setProgress("正在上传数据到服务器...");
 
-      // 只发送 JSON（远小于原始 Excel）
+      // 只发送 JSON（远小于原始 Excel）——只保留必要字段
+      // 不同文件保留不同字段，签字报表只保留工号和工时两列
+      const signKeys = new Set(['sign_this','sign_last','sign_biweek']);
+      const compressed: Record<string, any[]> = {};
+      const mainKeep = ['工号','考勤日期','姓名','三级部门','四级部门','五级部门','部门',
+        '班次名称','班次上班时间','班次下班时间','首打卡时间','末打卡时间','班次内打卡次数',
+        '是否排班正确','每日总工时(公式：末打卡-首打卡-班次午休时间+居家办公时长)合计',
+        '日超8H','是否日超8H','本周加班工时','上周累计加班工时','HUB','备注（GF）',
+        '居家办公合计（审批中）','补签数','休息开始时间','休息结束时间','入职日期','审批状态',
+        '供应商名称','工种','时长总计','加班工时','首末缺卡数','中间打卡时间1','中间打卡时间2',
+        '午休缺卡数','首打卡补签时间','休息开始补签时间','休息结束补签时间','末打卡补签时间',
+        '辅助列','员工名称','区域','仓库','组','本周累计加班工时','上周加班工时','每日总工时','班次'];
+      const hoursKw = ['工时','时长','小时','每日总工时'];
+      for (const [key, rows] of Object.entries(payload)) {
+        if (signKeys.has(key)) {
+          // 签字报表：只保留工号和工时
+          compressed[key] = rows.map((r: any) => {
+            const hoursCol = Object.keys(r).find(k => hoursKw.some(h => k.includes(h)));
+            return { 工号: r['工号'], 每日总工时: hoursCol ? r[hoursCol] : 0 };
+          });
+        } else {
+          // 其他文件：保留必要字段
+          compressed[key] = rows.map((r: any) => {
+            const o: any = {};
+            for (const f of mainKeep) { if (f in r) o[f] = r[f]; }
+            return o;
+          });
+        }
+      }
+
       const res = await fetch("/api/upload/pipeline", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ files: payload, worker_type: "GUS" }),
+        body: JSON.stringify({ files: compressed, worker_type: "GUS" }),
       });
 
       const text = await res.text();
@@ -141,7 +170,25 @@ export default function HomePage() {
         return;
       }
       if (!res.ok) setError(data.error || "处理失败");
-      else setResult(data);
+      else {
+        setResult(data);
+        // 浏览器端生成 Excel 下载
+        if (data.rows && data.rows.length > 0) {
+          const headers = Object.keys(data.rows[0]);
+          const aoa = [headers, ...data.rows.map((r: any) => headers.map((h: string) => r[h]))];
+          const ws = XLSX.utils.aoa_to_sheet(aoa);
+          const wb = XLSX.utils.book_new();
+          XLSX.utils.book_append_sheet(wb, ws, "处理结果");
+          const buf = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+          const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `考勤处理结果_${data.date}.xlsx`;
+          a.click();
+          URL.revokeObjectURL(url);
+        }
+      }
     } catch (e: any) {
       setError(e.message || "网络错误");
     } finally {
@@ -308,6 +355,16 @@ export default function HomePage() {
                   </div>
                 </div>
               )}
+
+              {/* 下载处理结果 */}
+              <div className="flex gap-3 flex-wrap">
+                <a
+                  href={`/api/upload/pipeline/download?date=${result.date}&worker=${result.worker_type}`}
+                  className="inline-block px-5 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium text-sm"
+                >
+                  ↓ 下载处理后的 Excel
+                </a>
+              </div>
             </div>
           )}
           {error && (
