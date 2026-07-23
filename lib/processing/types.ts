@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx';
+import * as XLSX from "xlsx";
 
 export interface ProcessingRow {
   employee_code: string;
@@ -77,6 +77,8 @@ export interface PipelineResult {
     after_step7_hours: number;
     final: number;
   };
+  /** 数据校验报告 */
+  validation?: import("./validation").ValidationReport;
 }
 
 export interface RawRow {
@@ -99,7 +101,8 @@ export interface RawRow {
   补签数?: number | string;
   日超8H?: number | string;
   是否日超8H?: string;
-  "每日总工时(公式：末打卡-首打卡-班次午休时间+居家办公时长)合计"?: number | string;
+  "每日总工时(公式：末打卡-首打卡-班次午休时间+居家办公时长)合计"?:
+    number | string;
   本周加班工时?: number | string;
   上周累计加班工时?: number | string;
   双周加班工时?: number | string;
