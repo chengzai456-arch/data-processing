@@ -166,21 +166,50 @@ export async function runPipeline(
   uploadId: string,
   dateStr?: string,
 ): Promise<PipelineResult> {
-  const raw = XLSX.utils.sheet_to_json<RawRow>(
-    XLSX.read(files.file, { type: "buffer" }).Sheets[
-      XLSX.read(files.file, { type: "buffer" }).SheetNames[0]
-    ],
-    { defval: "" },
-  );
-  if (raw.length === 0) throw new Error("数据为空");
+  // 解析 Excel，容错处理
+  let raw: RawRow[] = [];
+  try {
+    raw = XLSX.utils.sheet_to_json<RawRow>(
+      XLSX.read(files.file, { type: "buffer" }).Sheets[
+        XLSX.read(files.file, { type: "buffer" }).SheetNames[0]
+      ],
+      { defval: "" },
+    );
+  } catch (e) {
+    console.error("[pipeline] Excel 解析失败:", e);
+    throw new Error(`Excel 文件解析失败: ${(e as Error).message}`);
+  }
+  if (raw.length === 0) throw new Error("原始数据为空");
+
+  // 逐行映射，跳过非法行
   const mapped: ProcessingRow[] = [];
+  const errors: string[] = [];
   const freq: Record<string, number> = {};
-  for (const r of raw) {
-    const row = mapRow(r, workerType);
-    if (row) {
-      mapped.push(row);
-      freq[row.date] = (freq[row.date] || 0) + 1;
+  for (let i = 0; i < raw.length; i++) {
+    try {
+      const row = mapRow(raw[i], workerType);
+      if (row) {
+        mapped.push(row);
+        freq[row.date] = (freq[row.date] || 0) + 1;
+      } else {
+        errors.push(`第 ${i + 1} 行: 缺少工号或考勤日期`);
+      }
+    } catch (e) {
+      errors.push(`第 ${i + 1} 行: 解析异常 - ${(e as Error).message}`);
     }
+  }
+
+  if (mapped.length === 0) {
+    throw new Error(`所有行均解析失败，共 ${errors.length} 条错误。请检查文件格式`);
+  }
+
+  // 输出解析警告
+  if (errors.length > 0) {
+    console.warn(
+      `[pipeline] ${errors.length} 行跳过解析: ${errors.slice(0, 5).join("; ")}${
+        errors.length > 5 ? `... 等${errors.length}条` : ""
+      }`,
+    );
   }
   let md = "",
     mf = 0;
@@ -192,27 +221,45 @@ export async function runPipeline(
   }
   const dd = dateStr || md || new Date().toISOString().slice(0, 10);
 
-  const s1 = step1RemoveResigned(mapped, files.leave);
-  const s2 = step2RemoveNotJoined(s1, files.roster, dd);
-  const s3 = step3Gl00Handle(s2);
-  const s4 = step4RemoveEuHr(s3);
-  const s5 = step5RemoveGus(s4, files.gus_whitelist);
-  const s6 = step6MatchSupplement(s5, files.makeup, dd);
-  const s7 = step7MatchHours(
-    s6,
-    files.sign_this,
-    files.sign_last,
-    files.sign_biweek,
-  );
+  // 各步骤容错：每个步骤用 try-catch 包裹，失败时跳过该步骤并记录日志
+  let s1 = mapped;
+  try { s1 = step1RemoveResigned(mapped, files.leave); } catch (e) { console.warn("[pipeline] 步骤1失败，跳过:", (e as Error).message); }
+
+  let s2 = s1;
+  try { s2 = step2RemoveNotJoined(s1, files.roster, dd); } catch (e) { console.warn("[pipeline] 步骤2失败，跳过:", (e as Error).message); }
+
+  let s3 = s2;
+  try { s3 = step3Gl00Handle(s2); } catch (e) { console.warn("[pipeline] 步骤3失败，跳过:", (e as Error).message); }
+
+  let s4 = s3;
+  try { s4 = step4RemoveEuHr(s3); } catch (e) { console.warn("[pipeline] 步骤4失败，跳过:", (e as Error).message); }
+
+  let s5 = s4;
+  try { s5 = step5RemoveGus(s4, files.gus_whitelist); } catch (e) { console.warn("[pipeline] 步骤5失败，跳过:", (e as Error).message); }
+
+  let s6 = s5;
+  try { s6 = step6MatchSupplement(s5, files.makeup, dd); } catch (e) { console.warn("[pipeline] 步骤6失败，跳过:", (e as Error).message); }
+
+  let s7 = s6;
+  try {
+    s7 = step7MatchHours(
+      s6,
+      files.sign_this,
+      files.sign_last,
+      files.sign_biweek,
+    );
+  } catch (e) { console.warn("[pipeline] 步骤7失败，跳过:", (e as Error).message); }
+
   let cur = s7;
   const sd = files.shift_dict ? readShiftDict(files.shift_dict) : {};
-  cur = rule0RestTime(cur, sd);
-  cur = rule1HubMark(cur);
-  cur = rule2ShiftCorrect(cur, sd);
-  cur = rule3DailyHours(cur);
-  cur = rule4Over8h(cur);
-  cur = rule5SchedulePunch(cur);
-  cur = rule6NoteOverride(cur);
+
+  try { cur = rule0RestTime(cur, sd); } catch (e) { console.warn("[pipeline] 规则0失败，跳过:", (e as Error).message); }
+  try { cur = rule1HubMark(cur); } catch (e) { console.warn("[pipeline] 规则1失败，跳过:", (e as Error).message); }
+  try { cur = rule2ShiftCorrect(cur, sd); } catch (e) { console.warn("[pipeline] 规则2失败，跳过:", (e as Error).message); }
+  try { cur = rule3DailyHours(cur); } catch (e) { console.warn("[pipeline] 规则3失败，跳过:", (e as Error).message); }
+  try { cur = rule4Over8h(cur); } catch (e) { console.warn("[pipeline] 规则4失败，跳过:", (e as Error).message); }
+  try { cur = rule5SchedulePunch(cur); } catch (e) { console.warn("[pipeline] 规则5失败，跳过:", (e as Error).message); }
+  try { cur = rule6NoteOverride(cur); } catch (e) { console.warn("[pipeline] 规则6失败，跳过:", (e as Error).message); }
 
   // 写入 Supabase（如果配置了）+ 生成校验报告
   const resignedCount = mapped.length - s2.length; // step1 + step2
