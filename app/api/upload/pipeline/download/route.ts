@@ -3,6 +3,25 @@ import * as XLSX from 'xlsx';
 
 export const dynamic = 'force-dynamic';
 
+/** 分批拉取全量数据（避免单次 limit 5000 截断） */
+async function fetchAll(
+  supabase: any,
+  query: any,
+): Promise<Record<string, unknown>[]> {
+  const all: Record<string, unknown>[] = [];
+  const PAGE = 2000;
+  let from = 0;
+  for (;;) {
+    const { data, error } = await query.range(from, from + PAGE - 1);
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+    all.push(...data);
+    from += PAGE;
+    if (data.length < PAGE) break;
+  }
+  return all;
+}
+
 export async function GET(req: NextRequest) {
   const date = req.nextUrl.searchParams.get('date');
   const worker = req.nextUrl.searchParams.get('worker') || 'GUS';
@@ -20,10 +39,9 @@ export async function GET(req: NextRequest) {
 
       let query = supabase.from('attendance_data').select('*').eq('worker_type', worker);
       if (date) query = query.eq('date', date);
-      query = query.order('employee_code').limit(5000);
+      query = query.order('employee_code');
 
-      const { data, error } = await query;
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      const data = await fetchAll(supabase, query);
       if (data && data.length > 0) {
         const headers = Object.keys(data[0]);
         const rows = data.map((r: any) => headers.map((h) => r[h]));

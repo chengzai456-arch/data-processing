@@ -8,6 +8,7 @@ export interface ProcessingRow {
   department_level4: string;
   department_level5: string;
   department: string;
+  employee_position: string; // 职位（原表原样输出）
   shift_name: string;
   shift_start: string;
   shift_end: string;
@@ -30,6 +31,11 @@ export interface ProcessingRow {
   hub_status: string;
   note: string;
   pending_home_office_hours: number;
+  // 原表字段原样保留
+  home_office_hours: number;
+  daily_hours_formula: number;
+  home_office_pending: number;
+  accumulated_hours: number;
   rest_start: string;
   rest_end: string;
   rest_time: string;

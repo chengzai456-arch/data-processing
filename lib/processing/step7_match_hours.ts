@@ -1,5 +1,5 @@
-import * as XLSX from "xlsx";
 import { ProcessingRow } from "./types";
+import { readSheetRows } from "./excel";
 
 const HKW = ["每日总工时", "总工时", "工时", "时长", "小时"];
 const SUB = 40;
@@ -11,24 +11,71 @@ function tn(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-function psr(buf: Buffer, sub: boolean): Record<string, number> {
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(
-    XLSX.read(buf, { type: "buffer" }).Sheets[
-      XLSX.read(buf, { type: "buffer" }).SheetNames[0]
-    ],
-    { defval: "" },
-  );
+/** 工号规范化：去首尾空白后仅保留字母数字 */
+function empCode(v: unknown): string {
+  const s = String(v ?? "").trim();
+  return /^[A-Za-z0-9]+$/.test(s) ? s : "";
+}
+
+/**
+ * 签字报表处理
+ *
+ * 差异1修复: 只保留姓名列含"(合计)"的行(蓝色合计行), 其他行删除
+ *   比SKILL更精确: SKILL 用 openpyxl 读填充色, 但颜色可能丢失
+ *   用"(合计)"文本标记100%准确
+ *
+ * 差异2修复: 合计行剔除后, 每人只留1行(周汇总)
+ *   直接取该行的工时值作为周累计, 不做逐行sum
+ *   避免与明细行重复计算
+ */
+function psr(rows: Record<string, unknown>[], sub: boolean, label: string): Record<string, number> {
   const h = rows.length > 0 ? Object.keys(rows[0]) : [];
-  const hc = h.find((h) => HKW.some((k) => h.includes(k)));
-  const ec = h.find((h) => h.includes("工号"));
-  if (!hc || !ec) return {};
+  // 优先匹配完整列名，再按关键词匹配
+  const dailyCol = h.find((c) => c.includes("每日总工时"));
+  const hc = dailyCol || h.find((c) => HKW.some((k) => c.includes(k)));
+  const ec = h.find((c) => c.includes("工号"));
+  const nc = h.find((c) => c.includes("姓名"));
+  if (!hc || !ec) {
+    console.log(`  [step7-${label}] 缺少工时列或工号列`);
+    return {};
+  }
+
+  // 差异1: 只保留姓名含"(合计)"的行
+  let filtered = rows;
+  if (nc) {
+    filtered = rows.filter((r) => {
+      const name = String(r[nc] ?? "").trim();
+      return name.includes("(合计)");
+    });
+  }
+
+  console.log(`  [step7-${label}] 原始${rows.length}行, 合计行${filtered.length}行`);
+
+  // 差异2: 合计行中每个员工有且只有1行(周累计值)
+  // 按工号去重, 取第一条；工号做 trim + 字母数字校验，避免空格/脏数据导致重复
+  const seen = new Set<string>();
+  const deduped: Record<string, unknown>[] = [];
+  for (const row of filtered) {
+    const e = empCode(row[ec]);
+    if (!e || seen.has(e)) continue;
+    seen.add(e);
+    deduped.push(row);
+  }
+
+  console.log(`  [step7-${label}] 去重后${deduped.length}个员工`);
+
+  // 每人只有1行(周累计工时), 直接取 -40 floor 0
   const r: Record<string, number> = {};
-  for (const row of rows) {
-    const e = String(row[ec] ?? "").trim();
+  for (const row of deduped) {
+    const e = empCode(row[ec]);
     if (!e) continue;
     const h = tn(row[hc]);
-    if (sub) r[e] = Math.max(0, (r[e] || 0) + h - SUB);
-    else r[e] = (r[e] || 0) + h;
+    if (sub) {
+      r[e] = Math.max(0, Math.round((h - SUB) * 100) / 100);
+    } else {
+      // 双周不减40
+      r[e] = Math.round(h * 100) / 100;
+    }
   }
   return r;
 }
@@ -39,18 +86,31 @@ export function step7MatchHours(
   sLast?: Buffer,
   sBi?: Buffer,
 ): ProcessingRow[] {
-  const w = sThis ? psr(sThis, true) : {},
-    l = sLast ? psr(sLast, true) : {},
-    b = sBi ? psr(sBi, false) : {};
+  function readSheet(buf: Buffer): Record<string, unknown>[] {
+    try {
+      return readSheetRows(buf);
+    } catch {
+      return [];
+    }
+  }
+
+  const wData = sThis ? readSheet(sThis) : [];
+  const lData = sLast ? readSheet(sLast) : [];
+  const bData = sBi ? readSheet(sBi) : [];
+
+  const w = psr(wData, true, "本周");
+  const l = psr(lData, true, "上周");
+  const b = psr(bData, false, "双周");
+
   console.log(
-    `[step7] 签字报表: 本周${Object.keys(w).length}/上周${Object.keys(l).length}/双周${Object.keys(b).length}`,
+    `[step7] 签字报表: 本周${Object.keys(w).length}个/上周${Object.keys(l).length}个/双周${Object.keys(b).length}个`,
   );
+
   return rows.map((r) => ({
     ...r,
-    sign_report_hours: w[r.employee_code] ?? r.sign_report_hours ?? 0,
-    week_overtime_hours: w[r.employee_code] ?? r.week_overtime_hours ?? 0,
-    last_week_overtime_hours:
-      l[r.employee_code] ?? r.last_week_overtime_hours ?? 0,
-    sign_hours: b[r.employee_code] ?? r.sign_hours ?? 0,
+    sign_report_hours: (w[r.employee_code] ?? 0) + (r.sign_report_hours ?? 0),
+    week_overtime_hours: r.week_overtime_hours,
+    last_week_overtime_hours: (l[r.employee_code] ?? 0) + (r.last_week_overtime_hours ?? 0),
+    sign_hours: (b[r.employee_code] ?? 0),
   }));
 }

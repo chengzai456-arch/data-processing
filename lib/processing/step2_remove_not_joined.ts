@@ -1,5 +1,5 @@
-import * as XLSX from "xlsx";
 import { ProcessingRow } from "./types";
+import { readSheetRows } from "./excel";
 
 export function step2RemoveNotJoined(
   rows: ProcessingRow[],
@@ -10,11 +10,7 @@ export function step2RemoveNotJoined(
     console.log("[step2] 跳过");
     return rows;
   }
-  const wb = XLSX.read(rosterFile, { type: "buffer" });
-  const rosterRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(
-    wb.Sheets[wb.SheetNames[0]],
-    { defval: "" },
-  );
+  const rosterRows = readSheetRows(rosterFile);
   if (rosterRows.length === 0) return rows;
   const ref = new Date(standardDate || new Date().toISOString().slice(0, 10));
   const notJoined = new Set<string>();

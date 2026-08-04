@@ -5,8 +5,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as XLSX from 'xlsx';
-import { toStr, toNum, parseDate } from '../lib/processing/utils';
 import { RawRow, ProcessingRow, UploadFiles } from '../lib/processing/types';
+import { readSheetRows } from '../lib/processing/excel';
+import { mapRow } from '../lib/processing/pipeline';
 import { step1RemoveResigned } from '../lib/processing/step1_remove_resigned';
 import { step2RemoveNotJoined } from '../lib/processing/step2_remove_not_joined';
 import { step3Gl00Handle } from '../lib/processing/step3_gl00_handle';
@@ -22,40 +23,12 @@ const OUT_DIR = path.resolve(__dirname, '../../output');
 function readShiftDict(buf: Buffer): Record<string, {rest_start:string; rest_end:string; work_start:string}> {
   const d: any = {};
   try {
-    for (const r of XLSX.utils.sheet_to_json<any>(XLSX.read(buf,{type:'buffer'}).Sheets[XLSX.read(buf,{type:'buffer'}).SheetNames[0]],{defval:''})) {
+    for (const r of readSheetRows(buf)) {
       const n = String(r['班次名称']??'').trim(); if (!n) continue;
-      d[n] = {rest_start:String(r['休息开始']??'').trim(), rest_end:String(r['休息结束']??'').trim(), work_start:String(r['上班时间']||r['班次上班时间']||'').trim()};
+      d[n] = {rest_start:String(r['休息开始时间']??'').trim(), rest_end:String(r['休息结束时间']??'').trim(), work_start:String(r['上班时间']||r['班次上班时间']||'').trim()};
     }
   } catch {}
   return d;
-}
-
-function mapRow(raw: RawRow, wt: string): ProcessingRow|null {
-  const date = parseDate(raw['考勤日期']); if (!date) return null;
-  const code = toStr(raw['工号']); if (!code) return null;
-  const l = wt === 'GUS_LABOR';
-  return {
-    employee_code: code, date, employee_name: toStr(raw['姓名']||raw['员工名称']||''),
-    department_level3: toStr(raw['三级部门']||raw['区域']||''), department_level4: toStr(raw['四级部门']||raw['仓库']||''),
-    department_level5: toStr(raw['五级部门']||raw['组']||''), department: toStr(raw['部门']||raw['三级部门']||''),
-    shift_name: toStr(raw['班次名称']||raw['班次']||''), shift_start: toStr(raw['班次上班时间']||''), shift_end: toStr(raw['班次下班时间']||''),
-    first_punch: toStr(raw['首打卡时间']||''), last_punch: toStr(raw['末打卡时间']||''),
-    punch_count: toNum(raw['班次内打卡次数']||raw['辅助列']), is_schedule_correct: toStr(raw['是否排班正确']),
-    is_scheduled: toStr(raw['是否排班']), standard_punch_count: toNum(raw['标准打卡数']), miss_count: toNum(raw['缺卡数']),
-    makeup_count: toNum(raw['补签数']), is_over8h: toStr(raw['是否日超8H']),
-    daily_total_hours: toNum(raw['每日总工时(公式：末打卡-首打卡-班次午休时间+居家办公时长)合计']||raw['时长总计']||raw['每日总工时']),
-    overtime_hours: toNum(raw['日超8H']||raw['加班工时']), week_overtime_hours: toNum(raw['本周加班工时']||raw['本周累计加班工时']),
-    last_week_overtime_hours: toNum(raw['上周加班工时']||raw['上周累计加班工时']), sign_hours: toNum(raw['双周加班工时']),
-    sign_report_hours: 0, is_hub: toStr(raw['HUB']||'').length>0, hub_status: toStr(raw['HUB']||''),
-    note: toStr(raw['备注（GF）']||''), pending_home_office_hours: toNum(raw['居家办公合计（审批中）']),
-    rest_start: toStr(raw['休息开始时间']||''), rest_end: toStr(raw['休息结束时间']||''), rest_time: '',
-    supplier_name: l?toStr(raw['供应商名称']||''):'', worker_type_label: l?toStr(raw['工种']||''):'',
-    first_last_miss: l?toNum(raw['首末缺卡数']):0, mid_punch_1: l?toStr(raw['中间打卡时间1']||''):'',
-    mid_punch_2: l?toStr(raw['中间打卡时间2']||''):'', lunch_miss: l?toNum(raw['午休缺卡数']):0,
-    sign_start: l?toStr(raw['首打卡补签时间']||''):'', sign_rest_start: l?toStr(raw['休息开始补签时间']||''):'',
-    sign_rest_end: l?toStr(raw['休息结束补签时间']||''):'', sign_end: l?toStr(raw['末打卡补签时间']||''):'',
-    helper_col: l?toNum(raw['辅助列']):0,
-  };
 }
 
 async function main() {
@@ -63,7 +36,7 @@ async function main() {
   const mainBuf = fs.readFileSync(path.join(DATA_DIR, '722GUS+每日打卡工时推送模版 (51).xlsx'));
 
   // 1. 解析
-  const raw = XLSX.utils.sheet_to_json<RawRow>(XLSX.read(mainBuf,{type:'buffer'}).Sheets[XLSX.read(mainBuf,{type:'buffer'}).SheetNames[0]],{defval:''});
+  const raw = readSheetRows(mainBuf) as RawRow[];
   const rows = raw.map(r => mapRow(r, 'GUS')).filter(Boolean) as ProcessingRow[];
   console.log(`原始数据: ${raw.length} 行, 有效: ${rows.length} 行\n`);
 

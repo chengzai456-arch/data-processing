@@ -1,7 +1,7 @@
-import * as XLSX from "xlsx";
 import { ProcessingRow } from "./types";
+import { readSheetRows } from "./excel";
 
-const VS = ["已完成", "审批中", "转交"];
+const VS = new Set(["已完成", "审批中", "转交"]);
 
 export function step6MatchSupplement(
   rows: ProcessingRow[],
@@ -9,15 +9,11 @@ export function step6MatchSupplement(
   sd?: string,
 ): ProcessingRow[] {
   if (!f || f.length === 0) return rows.map((r) => ({ ...r, makeup_count: 0 }));
-  let s = XLSX.utils.sheet_to_json<Record<string, unknown>>(
-    XLSX.read(f, { type: "buffer" }).Sheets[
-      XLSX.read(f, { type: "buffer" }).SheetNames[0]
-    ],
-    { defval: "" },
-  );
+  let s = readSheetRows(f);
   if (s.length === 0) return rows.map((r) => ({ ...r, makeup_count: 0 }));
+  // 审批状态精确匹配（原为包含匹配，避免"审批中X"等误判）
   if ("审批状态" in s[0])
-    s = s.filter((r) => VS.includes(String(r["审批状态"] ?? "").trim()));
+    s = s.filter((r) => VS.has(String(r["审批状态"] ?? "").trim()));
   const dc = Object.keys(s[0] ?? {}).find((k) => k.includes("日期"));
   if (dc && sd)
     s = s.filter((r) => {

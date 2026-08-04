@@ -9,10 +9,10 @@ const templates = [
   { key: "roster", label: "花名册", hint: "花名册", req: true },
   { key: "shift_dict", label: "班次", hint: "班次字典", req: true },
   { key: "makeup", label: "补签管理", hint: "补签管理记录", req: true },
-  { key: "gus_whitelist", label: "GUS白名单", hint: "GUS需剔除人员", req: false },
+  { key: "gus_whitelist", label: "GUS白名单", hint: "GUS需剔除人员", req: true },
   { key: "sign_this", label: "本周签字报表", hint: "GUS+美区签字报表（无括号）", req: true },
   { key: "sign_last", label: "上周签字报表", hint: "GUS+美区签字报表 (2)", req: true },
-  { key: "sign_biweek", label: "双周签字报表", hint: "GUS+美区签字报表 (1)", req: true },
+  { key: "sign_biweek", label: "双周签字报表", hint: "GUS+美区签字报表 (1)", req: false },
 ];
 
 const rules: [string, string][] = [
@@ -38,14 +38,19 @@ export default function HomePage() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const matchCount = templates.filter((t) => t.req && matched[t.key]).length;
-  const canUpload = matchCount >= 8 && !uploading;
+  const canUpload = matchCount >= 7 && !uploading;
 
   const handleFiles = (list: File[]) => {
     const next = { ...matched };
-    for (const f of list) {
-      for (const [key, kw] of rules) {
-        if (!next[key] && f.name.includes(kw)) { next[key] = f.name; break; }
-      }
+    // 对每个文件，按优先级寻找最匹配的规则
+    // 同一类型有多个文件时，优先选非【】前缀的（排除已完成/审批中等状态前缀）
+    for (const [key, kw] of rules) {
+      const candidates = list.filter((f) => f.name.includes(kw));
+      if (candidates.length === 0) continue;
+      // 多个候选时：优先选不以【开头的（排除状态前缀文件）
+      const preferred = candidates.filter((f) => !f.name.startsWith("【") && !f.name.includes("- 副本"));
+      const chosen = preferred.length > 0 ? preferred[0] : candidates[0];
+      if (!next[key]) next[key] = chosen.name;
     }
     setMatched(next); setError(null); setResult(null);
   };
@@ -61,10 +66,12 @@ export default function HomePage() {
       if (!inp?.files) { setError("请选择文件"); setUploading(false); return; }
 
       const fileMap: Record<string, File> = {};
-      for (const f of Array.from(inp.files)) {
-        for (const [key, kw] of rules) {
-          if (f.name.includes(kw)) { fileMap[key] = f; break; }
-        }
+      for (const [key, kw] of rules) {
+        const candidates = Array.from(inp.files).filter((f) => f.name.includes(kw));
+        if (candidates.length === 0) continue;
+        // 同一类型多个候选时：优先选不以【开头的
+        const preferred = candidates.filter((f) => !f.name.startsWith("【") && !f.name.includes("- 副本"));
+        fileMap[key] = preferred.length > 0 ? preferred[0] : candidates[0];
       }
 
       const missing = templates.filter((t) => t.req && !fileMap[t.key]).map((t) => t.label);
@@ -87,12 +94,19 @@ export default function HomePage() {
         "班次上班时间","班次下班时间","首打卡时间","末打卡时间","班次内打卡次数","是否排班正确",
         "每日总工时(公式：末打卡-首打卡-班次午休时间+居家办公时长)合计","日超8H","是否日超8H",
         "本周加班工时","上周累计加班工时","HUB","备注（GF）","居家办公合计（审批中）","补签数",
-        "休息开始时间","休息结束时间"];
-      const hoursKw = ["工时", "时长", "小时", "每日总工时"];
+        "休息开始时间","休息结束时间",
+        // 清洗步骤所需列
+        "最后工作日","审批状态","入职日期","补签日期","加班合计","加班时间段开始1","加班时间段结束1","加班时间段开始2","加班时间段结束2","OT1.5合计","OT2.0合计","计薪出勤时长合计（REG）",
+        // step7 签字报表所需列（工时列全名）
+        "每日总工时(公式：末打卡-首打卡-班次午休时间+居家办公时长)"];
+      const hoursKw = ["每日总工时", "总工时", "工时", "时长", "小时"];
       for (const [key, rows] of Object.entries(payload)) {
         if (signKeys.has(key)) {
           compressed[key] = rows.map((r: any) => {
-            const hc = Object.keys(r).find((k) => hoursKw.some((h) => k.includes(h)));
+            // 优先匹配完整列名"每日总工时(公式：..."
+            const allKeys = Object.keys(r);
+            const dailyCol = allKeys.find((k) => k.includes("每日总工时"));
+            const hc = dailyCol || allKeys.find((k) => hoursKw.some((h) => k.includes(h)));
             return { 工号: r["工号"], 每日总工时: hc ? r[hc] : 0 };
           });
         } else {
@@ -190,7 +204,7 @@ export default function HomePage() {
             })}
           </div>
           <div className="mt-6 flex items-center justify-between">
-            <span className="text-xs text-gray-400">已匹配 {matchCount} / 8 类必填</span>
+            <span className="text-xs text-gray-400">已匹配 {matchCount} / 7 类必填</span>
             <button disabled={!canUpload} onClick={handleUpload}
               className={"px-8 py-2.5 rounded-lg font-medium text-white transition-all " + (canUpload ? "bg-primary-600 hover:bg-primary-700" : "bg-gray-300 cursor-not-allowed")}>
               {uploading ? "处理中..." : "上传并处理"}

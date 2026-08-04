@@ -2,4 +2,9 @@
 node_modules/
 .env
 .env.local
-.vercel/
+.vercel
+
+# 工具/缓存/备份
+.claude/
+*.bak
+*.tsbuildinfo
