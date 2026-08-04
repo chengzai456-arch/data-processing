@@ -25,8 +25,25 @@ const rules: [string, string][] = [
 async function parseExcel(file: File): Promise<any[]> {
   const buf = await file.arrayBuffer();
   const wb = XLSX.read(buf, { type: "array" });
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  return XLSX.utils.sheet_to_json(ws, { defval: "" });
+  // 多 sheet 合并（GUS白名单有多 sheet 的剔除名单，只取第一个会漏剔）
+  const sheets = (wb.SheetNames || []).filter((n) => wb.Sheets[n]);
+  if (sheets.length === 0) return [];
+  const all: any[] = [];
+  for (const sn of sheets) {
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { defval: "" });
+    if (rows.length === 0) continue;
+    if (all.length === 0) all.push(...rows);
+    else {
+      // 后续 sheet 列对齐到第一个 sheet 的列（缺列补空）
+      const baseCols = Object.keys(all[0]);
+      for (const r of rows) {
+        const o: any = {};
+        for (const c of baseCols) o[c] = (r as any)[c] ?? "";
+        all.push(o);
+      }
+    }
+  }
+  return all;
 }
 
 export default function HomePage() {
@@ -95,6 +112,8 @@ export default function HomePage() {
         "每日总工时(公式：末打卡-首打卡-班次午休时间+居家办公时长)合计","日超8H","是否日超8H",
         "本周加班工时","上周累计加班工时","HUB","备注（GF）","居家办公合计（审批中）","补签数",
         "休息开始时间","休息结束时间",
+        // 输出字段所需列（压缩后丢失会导致输出 Excel 空列）
+        "职位","居家办公工时（全）合计","累计总工时",
         // 清洗步骤所需列
         "最后工作日","审批状态","入职日期","补签日期","加班合计","加班时间段开始1","加班时间段结束1","加班时间段开始2","加班时间段结束2","OT1.5合计","OT2.0合计","计薪出勤时长合计（REG）",
         // step7 签字报表所需列（工时列全名）
@@ -107,7 +126,9 @@ export default function HomePage() {
             const allKeys = Object.keys(r);
             const dailyCol = allKeys.find((k) => k.includes("每日总工时"));
             const hc = dailyCol || allKeys.find((k) => hoursKw.some((h) => k.includes(h)));
-            return { 工号: r["工号"], 每日总工时: hc ? r[hc] : 0 };
+            // 保留姓名列：step7 依赖「姓名含(合计)」筛选周汇总行
+            const nc = allKeys.find((k) => k.includes("姓名"));
+            return { 工号: r["工号"], 每日总工时: hc ? r[hc] : 0, 姓名: nc ? r[nc] : "" };
           });
         } else {
           compressed[key] = rows.map((r: any) => {

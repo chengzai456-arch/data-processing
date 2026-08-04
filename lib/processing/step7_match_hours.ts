@@ -41,13 +41,15 @@ function psr(rows: Record<string, unknown>[], sub: boolean, label: string): Reco
   }
 
   // 差异1: 只保留姓名含"(合计)"的行
-  let filtered = rows;
-  if (nc) {
-    filtered = rows.filter((r) => {
-      const name = String(r[nc] ?? "").trim();
-      return name.includes("(合计)");
-    });
+  // 没有姓名列时无法识别合计行，返回空并告警（宁可明确为 0，也不静默取错明细行）
+  if (!nc) {
+    console.log(`  [step7-${label}] ⚠️ 缺少姓名列，无法识别(合计)行，签字工时置 0`);
+    return {};
   }
+  const filtered = rows.filter((r) => {
+    const name = String(r[nc] ?? "").trim();
+    return name.includes("(合计)");
+  });
 
   console.log(`  [step7-${label}] 原始${rows.length}行, 合计行${filtered.length}行`);
 
@@ -108,9 +110,10 @@ export function step7MatchHours(
 
   return rows.map((r) => ({
     ...r,
-    sign_report_hours: (w[r.employee_code] ?? 0) + (r.sign_report_hours ?? 0),
+    // 覆盖语义（与 workbench 参考实现一致）：签字报表有值用签字报表，否则保留原始
+    sign_report_hours: (w[r.employee_code] ?? r.sign_report_hours ?? 0),
     week_overtime_hours: r.week_overtime_hours,
-    last_week_overtime_hours: (l[r.employee_code] ?? 0) + (r.last_week_overtime_hours ?? 0),
-    sign_hours: (b[r.employee_code] ?? 0),
+    last_week_overtime_hours: (l[r.employee_code] ?? r.last_week_overtime_hours ?? 0),
+    sign_hours: (b[r.employee_code] ?? r.sign_hours ?? 0),
   }));
 }
